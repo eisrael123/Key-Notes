@@ -42,16 +42,21 @@ set below.
 
 ## `metadata.py` command-line arguments (current pipeline, for reference)
 
-Positional arguments:
+> Updated 2026-08-03: these were positional arguments when this note was written. They are all
+> named flags now, and they can also come from the browser form — see
+> [metadata-form-and-quick-input.md](metadata-form-and-quick-input.md).
 
-| Argument | Description |
+Run arguments:
+
+| Flag | Description |
 |---|---|
-| `fastq_root_dir` | Directory containing the `test/` and `cntl/` subdirectories |
-| `reference_dir` | Path to `referenceFiles` |
-| `species_name` | Genome build; must match a directory under `reference_dir` |
-| `investigator_name` | Investigator name |
-| `experiment_type` | `PE` or `SE` |
-| `results_dir` | Output directory |
+| `--root-fastq-dir` | Directory containing the `test/` and `cntl/` subdirectories (always required) |
+| `--output-dir` | Output directory (always required) |
+| `--reference-dir` | Path to `referenceFiles` |
+| `--species-name` | Genome build; must match a directory under `--reference-dir` |
+| `--investigator-name` | Investigator name; whitespace is stripped |
+| `--experiment-type` | `PE` or `SE` |
+| `--quick-input` | Read everything but the two directories from `input_args.json` |
 
 Experiment option flags (prompted interactively if omitted):
 
