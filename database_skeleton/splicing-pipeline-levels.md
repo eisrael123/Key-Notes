@@ -3,6 +3,16 @@
 The four levels of splicing data in this warehouse, raw to summarized,
 and where a real statistical test enters (not just grouping/averaging).
 
+`junction` captures every splice junction observed, full stop — both the
+routine, constant intron removal every gene does, and any alternative
+splicing junctions, with no distinction made between them.
+`splicing_event_replicate`/`splicing_event`/`splicing_summary` all come
+from rMATS, and rMATS only detects and tests **alternative** splicing —
+it doesn't report on ordinary intron removal at all, since that never
+varies and isn't interesting. So `junction` is the only one of the four
+that includes routine splicing; the upper three are alternative-splicing
+only.
+
 ## junction
 Raw. Every splice junction seen in a sample, at a genomic coordinate, no
 interpretation attached.
@@ -71,3 +81,37 @@ interpretation:
   everything tested, how many choices actually changed in a trustworthy
   way. Useful for getting oriented before looking at individual genes,
   not for learning anything new on its own.
+
+## Why alternative splicing specifically, not splicing in general
+
+Constitutive splicing (plain intron removal) is the same every time, for
+every copy of a gene, in every condition — it never varies, so comparing
+it between `test` and `cntl` couldn't reveal anything. Alternative
+splicing is the only part of the process that's regulated and
+condition-dependent, which is why it's the only part worth testing.
+
+**Why it matters biologically, in general:** it's how a limited number of
+genes produces a much larger number of distinct proteins — including one
+exon vs. skipping it can produce two proteins with different domains, or
+even opposite functions, from the exact same gene. It's also fast and
+reversible: a cell can change its splicing choices in response to a
+signal without altering its DNA or waiting on new gene expression from
+scratch, making it a quick way to reprogram what proteins get made. This
+is why alternative splicing shows up heavily in development, cancer, and
+infection — situations where a cell needs to change its identity or
+behavior quickly.
+
+**Why it matters for EBV specifically:** two directions. First, EBV's own
+genome relies on alternative splicing to punch above its weight — a
+compact viral genome produces many different proteins across its
+infection stages by splicing the same primary transcript different ways,
+rather than needing a separate gene per protein. Second, and more
+relevant to the host side of this data: EBV is known to interfere with
+the host cell's own splicing machinery during lytic infection, not just
+shut host genes off wholesale. That's a subtler kind of interference than
+turning a gene down — a gene can still look normally transcribed (no
+change in `de_gene`) while the virus quietly breaks it by disrupting
+which exons get included, producing a nonfunctional protein instead of a
+missing one. That's exactly the kind of effect `de_gene` alone can't
+catch, and why `splicing_event`/`transcript_de` exist as a separate
+layer rather than being assumed to follow from gene-level expression.
