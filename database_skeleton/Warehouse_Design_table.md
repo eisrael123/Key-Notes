@@ -6,8 +6,9 @@ reasoning doesn't have to be re-derived later.
 ## Table inventory (verified for overlap)
 
 Every file below was checked against every other file for duplicated
-information, not just skimmed by column name. `splicing_summary.tsv` was
-the one real overlap found — flagged and excluded below.
+information, not just skimmed by column name. `splicing_summary.tsv` and
+`expression_gene.tsv` are the two overlaps found — flagged and excluded
+below.
 
 | file | what it measures | biological question it answers |
 |---|---|---|
@@ -43,9 +44,36 @@ FROM splicing_event
 GROUP BY run_id, comparison_id, event_type, counting_mode;
 ```
 
+**Excluded: `expression_gene.tsv`.** Verified against real data (run
+R6dc470632f84), full table not a sample — checked all 907,902 gene rows
+against `expression_transcript.tsv` summed by `(sample_id, gene_id)`. Zero
+mismatches on `est_counts` or `tpm`. The only unmatched keys were 6
+`(sample, gene_id='NA')` aggregates from the unmapped-transcript rows,
+which correctly don't get a gene-level row — not a counterexample, the
+aggregation working as expected. No new information, cheap to recompute.
+One difference from `splicing_summary`: that table is produced by the same
+tool (rMATS) in the same step as its source, so it can't structurally
+drift. `expression_gene` and `expression_transcript` come from separate
+pipeline steps (kallisto's transcript quantification vs. a gene-level
+rollup step), so zero drift today isn't structurally guaranteed to stay
+zero if that rollup step ever changes — if anything, a stronger reason to
+make it a view, not a weaker one. Build as a view instead of loading it as
+a table:
+
+```sql
+CREATE VIEW expression_gene AS
+SELECT run_id, sample_id, gene_id, gene_symbol,
+       sum(est_counts) AS est_counts,
+       sum(tpm) AS tpm
+FROM expression_transcript
+WHERE gene_id IS NOT NULL AND gene_id != 'NA'
+GROUP BY run_id, sample_id, gene_id, gene_symbol;
+```
+
 ## Decisions so far
 
-- Load all of `tables/*.tsv` **except** `splicing_summary.tsv` (view above instead).
+- Load all of `tables/*.tsv` **except** `splicing_summary.tsv` and `expression_gene.tsv` (views above instead).
 - Load `reports/mycoplasma_report.tsv` only — the one file in `reports/` with no equivalent elsewhere.
 - Everything else in `reports/` excluded as redundant: `topGenes.tsv`/`topTranscripts.tsv`/`top_gene_tpms.tsv` are filtered joins of tables already loaded; `alignmentSummary.tsv`/`transcriptCoverage.tsv` are wide reshapes of `qc_metric.tsv`'s `star`/`kallisto` rows; `de_gene.xlsx` is a format duplicate of `de_gene.tsv`; PNGs/`report.html` are rendered artifacts, not tabular data.
 - `artifacts_manifest` stays a materialized table, not a view — unlike the redundant cases above, it's not duplicating other loaded data (nothing else records artifact paths/checksums), and materializing it preserves a record of files that may later be archived or deleted off disk.
+- `comparisons` (new, not yet built): one row per `(run_id, comparison_id)`, columns `test_group`/`cntl_group` (currently always `'test'`/`'cntl'` per `rnaseq_helper_scripts/outputs.py`, but stored as data rather than assumed from the `comparison_id` string). Sample membership in a comparison is not stored separately — join to `samples` on `condition = comparisons.test_group`/`cntl_group`, since every comparison includes all of a run's samples with no subsetting.
