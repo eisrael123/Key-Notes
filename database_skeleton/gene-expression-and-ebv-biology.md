@@ -1,67 +1,77 @@
 # gene-expression-and-ebv-biology
 
-What "gene expression" (RNA-seq) actually measures, and why it's the core
-readout for this experiment's EBV latency-to-lytic reactivation design.
+What "gene expression" actually measures, and why it's the right thing to
+measure for this experiment.
 
-## What RNA-seq expression measures
+## What gene expression measures
 
-DNA → mRNA (transcription) → protein (translation). RNA-seq counts mRNA
-molecules — a readout of transcription/mRNA stability, not protein
-abundance. The two usually correlate but aren't identical: translation
-efficiency and protein degradation rate both happen downstream of what
-RNA-seq sees. mRNA is measured genome-wide because it's cheap and
-scalable (~20,000 genes in one run); genome-wide protein measurement
-(mass spec) is harder and far more expensive. So expression data is a
-proxy for what the cell is currently transcribing, not a direct
-measurement of what it has built.
+DNA gets copied into mRNA, then mRNA gets built into protein. RNA-seq
+counts mRNA, not protein. The two are related but not the same — a gene
+can make a lot of mRNA that never turns into much protein, or the
+reverse.
 
-## Why it matters
+Researchers measure mRNA instead of protein directly for two real
+reasons, not just cost:
 
-Every cell has the same DNA; what differs between cell types/states is
-which genes are expressed. Comparing expression between two conditions
-(`test` vs `cntl`) shows which parts of that program the cell switched on
-or off in response to a stimulus.
+- mRNA sequencing reliably catches low-abundance molecules. Many of the
+  most important proteins in biology — transcription factors especially
+  — are naturally low in number and easy to miss with direct protein
+  measurement unless you go out of your way to enrich for them.
+- mRNA and protein aren't answering the same question. mRNA shows what
+  the cell is currently transcribing. Protein shows what it's actually
+  built. For an experiment about transcription factors reprogramming a
+  cell — which is exactly what this one is — mRNA is the direct, correct
+  thing to measure, not a cheap stand-in for the "real" answer.
 
-## EBV latency vs. lytic — what this experiment is actually testing
+If the actual question were about protein stability or how efficiently
+mRNA gets turned into protein, RNA-seq wouldn't answer that no matter the
+budget — that needs a protein-specific method regardless. Serious studies
+often follow up an RNA-seq result with something protein-specific (a
+Western blot, targeted mass spec) to confirm a change also shows up at
+the protein level, not just the mRNA level.
 
-EBV has two infection modes:
+## Why gene expression matters
 
-- **Latency**: viral genome sits quiet inside the cell, expresses only a
-  handful of its ~80 genes, makes no new virus, cell keeps dividing —
-  how EBV persists lifelong and evades the immune system.
-- **Lytic**: a switch flips, most of the viral genome activates in a
-  coordinated cascade, the cell is hijacked to replicate viral DNA and
-  build new virus particles, then dies to release them.
+Every cell has the same DNA. What makes cell types different is which
+genes are turned on. Comparing expression between two conditions shows
+which genes the cell switched on or off in response to something.
 
-The latency→lytic switch is controlled by two viral proteins, Zta
-(`BZLF1`) and Rta (`BRLF1`). This experiment's `perturbation_target =
-Zta+Rta` forces that switch directly — every `test` vs `cntl` comparison
-in this warehouse is measuring what changes, host and viral, when EBV is
-forced out of latency.
+## What this experiment is actually testing
 
-## What researchers are looking for
+EBV lives in two modes:
 
-- **Host response**: does the cell mount an antiviral/interferon
-  response, or does EBV suppress host expression broadly ("host
-  shutoff"), a documented herpesvirus behavior during lytic replication.
-- **Viral gene cascade**: the reference genome (`hg38plusAkataInverted`)
-  includes both human and EBV (Akata strain) sequence, so `de_gene`
-  contains viral genes alongside host genes. Confirmed in this
-  warehouse's own data — the top genes by `padj` in the smoke-test run
-  include `BHLF1_1`, `BMRF1_1`, `BORF2_1`, `BRLF1_1`, `BcLF1_1`:
-  canonical EBV lytic genes, not human ones. `BRLF1` is Rta itself
-  (directly transfected in); `BMRF1`/`BORF2` are early viral
-  DNA-replication machinery; `BcLF1` is the major capsid protein, a late
-  gene — meaning the cascade had progressed far enough to begin building
-  new virions.
-- **Clinical relevance**: EBV-associated cancers (this cell line, SNU719,
-  is EBV+ gastric carcinoma) are thought to be driven by latent viral
-  gene expression acting as an oncogene program. Deliberately forcing
-  lytic reactivation to kill infected tumor cells ("lytic induction
-  therapy") is a real therapeutic strategy, making the order and
-  magnitude of host/viral gene changes during this switch directly
-  relevant.
-- **Splicing disruption**: herpesviruses are known to alter host RNA
-  splicing during lytic infection — why this pipeline runs
-  `splicing_event`/`transcript_de` alongside `de_gene`, not gene-level
-  counts alone.
+- **Latent**: the virus stays quiet, makes only a few of its own genes,
+  doesn't build new virus, and the cell keeps dividing normally. This is
+  how EBV survives in a person for life without being noticed by the
+  immune system.
+- **Lytic**: the virus flips a switch, turns on most of its genes,
+  hijacks the cell to build copies of itself, then kills the cell to
+  release them.
+
+Two viral proteins control that switch: Zta (`BZLF1`) and Rta (`BRLF1`).
+This experiment directly forces that switch by adding Zta+Rta to the
+cells. Every `test` vs `cntl` comparison in this database is measuring
+what changes — in the cell and in the virus — when that switch gets
+flipped.
+
+## What people are looking for
+
+- Does the cell fight back (turn on antiviral genes), or does the virus
+  successfully shut the cell's own genes down? EBV is known to actively
+  suppress the host's normal genes during the lytic switch.
+- The reference genome used here includes both human and EBV DNA, so the
+  same results table has human genes and viral genes side by side. This
+  warehouse's own data already shows it: the top significant genes in
+  the smoke-test run include `BHLF1_1`, `BMRF1_1`, `BORF2_1`, `BRLF1_1`,
+  `BcLF1_1` — EBV genes, not human ones. `BRLF1` is Rta itself.
+  `BMRF1`/`BORF2` build viral DNA. `BcLF1` builds the virus's outer
+  shell — meaning the cell had gotten far enough along to start building
+  new virus.
+- This cell line (SNU719) comes from a real EBV-linked cancer (gastric
+  carcinoma). The cancer is thought to be driven by the virus staying
+  latent. One treatment idea is to force the lytic switch on purpose to
+  kill the infected cancer cells. Understanding exactly what changes
+  during that switch is directly relevant to whether that idea works.
+- EBV is also known to mess with how the cell splices its own mRNA, not
+  just how much of it gets made — why this pipeline also tracks splicing
+  changes, not just overall gene activity.
