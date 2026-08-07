@@ -1,0 +1,7 @@
+# EBV Latency vs. Lytic Switch
+
+Latency: EBV's genome sits in the nucleus as a quiet circular episome. Only a small handful of "latency genes" are expressed (EBNAs, LMPs), and the rest of the genome — including all the genes needed to make new virus — is epigenetically silenced (locked down by DNA methylation and repressive chromatin). No new virions are made. This is how EBV hides long-term in memory B cells.
+
+Lytic: A specific trigger (immune/differentiation signal, stress, or a lab-induced stimulus) turns on BZLF1 (Zta), an immediate-early gene. Zta is unusual — it's one of the few transcription factors that can bind and activate genes even through the repressive methylated DNA. Once expressed, Zta (with a partner, Rta) kicks off a cascade: early genes (viral DNA replication machinery) → genome replication → late genes (capsid/structural proteins) → new virus particles assembled → cell eventually bursts, releasing virus to infect new cells.
+
+So the "switch" is really: does the cell start expressing Zta above a critical level or not. There is a threshold-like, self-reinforcing quality to it — Zta boosts its own expression once activated, so crossing that threshold commits the cell irreversibly to the full lytic program rather than a partial/graded response. But what flips is the identity of the gene expression program (dozens of previously silent genes turning on), not the transcription rate of the same genes speeding up.
