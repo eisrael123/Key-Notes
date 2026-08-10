@@ -1,12 +1,9 @@
 # warehouse-hosting-and-access
 
-Where `warehouse.duckdb` and the raw pipeline artifacts should live long
-term, so every lab member can query the same data from their own Claude
-account without mounting anything.
+Where `warehouse.duckdb` and the raw artifacts live, and how each lab
+member's Claude reaches them.
 
-## The measurement that reframes the problem
-
-Measured against the real `rnaseq_runs/` tree, not estimated:
+## Sizes (measured, not estimated)
 
 | | Size |
 |---|---|
@@ -14,173 +11,156 @@ Measured against the real `rnaseq_runs/` tree, not estimated:
 | All `tables/*.tsv` across 10 real runs | **12.5 GB** |
 | Estimated `warehouse.duckdb` after load + compression | **~2–4 GB** |
 
-Per-table TSV totals across all runs: `splicing_event_replicate` 3.72 GB,
-`expression_transcript` 2.01 GB, `signal_over_gene` 1.75 GB, `junction`
-1.71 GB, `splicing_event` 1.07 GB, `transcript_de` 0.85 GB,
-`expression_gene` 0.70 GB (dropped — becomes a view), `de_gene` 0.19 GB,
-everything else negligible.
+The warehouse is ~0.1% of the data. The database and the raw data are
+three orders of magnitude apart and are two separate problems. Trying to
+solve both with one mechanism is what made this feel hard.
 
-**The warehouse is ~0.1% of the data.** The database and the raw data are
-three orders of magnitude apart and are two separate hosting problems.
-Solving them with one mechanism is what makes this feel hard.
+## The architecture
 
-## The three mount objections, graded
+| | Where it lives | How it's reached |
+|---|---|---|
+| `warehouse.duckdb` (~3 GB) | Local disk, each member's machine | Local MCP server, opened `READ_ONLY` |
+| `artifacts/` (2.8 TB) | Lab NAS (`FlemingtonLabMain1`) | SMB mount — human opens in IGV, Claude reads via tools |
 
-1. **Windows breaks Finder volume mounts** — true, but stops mattering
-   once no user machine mounts anything.
-2. **Mounts drop and need reconnecting** — true, and the most real of the
-   three. SMB/AFP mounts die on sleep, Wi-Fi switch, and VPN
-   renegotiation. No config fixes this. Any design requiring a
-   laptop-side persistent mount is wrong.
-3. **Network share is slow at TB scale** — true for the TBs, false for
-   the warehouse. Wrong unit of analysis: answering "which EBV genes went
-   up in SNU719" touches a few MB inside a 3 GB file, not 2.8 TB.
+**No HTTPS server.** Nothing to build, secure, certificate, or maintain.
 
-**The assumption underneath all three** was that the MCP tool needs
-filesystem access on the user's machine. It doesn't. An MCP tool is a
-remote procedure call — the query travels out, executes where the data
-already lives, and a few KB of answer comes back. Server-side `grep`/
-`samtools` are exposed the same way: as tools that run remotely and
-return text. The 2.8 TB never moves and no laptop mounts anything, on any
-OS.
+Each member runs Claude Desktop with a local MCP server. "Local" doesn't
+mean a daemon that never turns off — it's a subprocess the Claude client
+launches on start and kills on quit. What makes it reliable is that there
+is no network in the path for warehouse queries, so there's nothing that
+can disconnect. (Local MCP servers only work in Claude Desktop/Cowork,
+not claude.ai in a browser — everyone needs the desktop app.)
 
-## Two things that force a real endpoint
+Because the MCP server runs on the same machine that has the NAS mounted,
+Claude can **read** artifact files directly — grep chimeric junctions,
+parse a QC report, pull a column from a count matrix — not just report
+where they are.
 
-### Artifacts need a resolvable location, not just a path
+## Why artifacts don't need their own server
 
-The warehouse stores *paths* to artifacts in `artifacts_manifest`. A path
-like `/Volumes/TUNGSACore3/rnaseq_runs/.../foo.bw` is meaningless to a
-lab member on a Windows laptop. Something has to turn a stored path into
-something a person or IGV can actually open.
+Checked what's actually in `artifacts/` rather than assuming. It's mostly
+IGV tracks and plots, plus a small tail of machine-readable data.
 
-The good news: the two formats that matter are **built for exactly this**.
-The tree contains 288 `.bw` bigWig files and 76 BAMs with 75 `.bai`
-indexes alongside them. bigWig and indexed BAM are random-access binary
-formats designed to be read over HTTP range requests — IGV can load
-either straight from a URL and fetch only the bytes for the region on
-screen. Viewing BZLF1 coverage pulls kilobytes, not the whole multi-GB
-file. So a plain HTTPS file server over the `artifacts/` tree, with range
-requests enabled, fully serves the manual-inspection funnel described in
-`signal-over-gene-coverage-vs-expression.md` — no download step, no
-mount.
+The expected counter-example failed: GSEA looked like artifacts-only
+territory (4,067 files vs. a tiny `gene_set_enrichment` table), but the
+warehouse's `leading_edge_genes` column already holds real symbols
+(`NFKB1,TRAF2,IKBKB,...`), not just GSEA's `tags=65%, list=7%` summary.
+The pipeline already pulls the useful part forward.
 
-One gap worth checking: 76 BAMs but only 75 indexes. An unindexed BAM
-can't be streamed this way and would have to be indexed or downloaded
-whole.
+Genuinely artifacts-only:
 
-**Schema implication:** `artifacts_manifest` should treat `rel_path` as
-canonical and portable, and resolve the actual location at query time by
-prefixing a configured base (a local mount path, or an HTTPS base URL)
-depending on where the query runs. Storing a machine-specific `abs_path`
-in the database bakes in one deployment's layout and breaks the moment
-the data is served from anywhere else.
+- **`Chimeric.out.junction`** — ~163 MB/sample, confirmed absent from
+  every `tables/` file. Matters here: viral-host chimeric transcripts and
+  EBV integration sites are only answerable from this.
+- DESeq2 normalized count matrices, kallisto `.h5` bootstraps, rMATS
+  `JC.raw.input.*`, raw fastp/fastqc/RSeQC reports, ~2,400 PNGs.
 
-### Update cadence — measured, not assumed
+Also worth knowing: bigWig and indexed BAM are random-access formats, so
+IGV over a mount reads only the bytes for the region on screen. Viewing
+BZLF1 coverage pulls kilobytes, not the multi-GB file. (Census: 288
+bigWigs, 76 BAMs, 75 `.bai` — one BAM is unindexed and can't be streamed
+this way.)
 
-The concern was that re-distributing the database on every new experiment
-would be unworkable. Actual run dates in the tree: 2019-12, 2020-04,
-2020-09, 2020-11, 2020-11, 2022-05, 2022-12, 2022-12, 2025-04, 2025-08 —
-**10 runs in ~5.7 years, roughly one every 7 months.**
+## Why "everyone works on campus" is the load-bearing assumption
 
-At that cadence, syncing a 3 GB file is a non-event, and it's an
-automated background sync (rsync/Syncthing/S3), never a manual "send
-everyone a file." The distribution objection is real in principle but
-doesn't match the lab's actual history. It becomes real if throughput
-increases substantially — worth revisiting then, not now.
+It's the deciding factor, not data size:
 
-Note one wrinkle if you do go the sync route: a rebuilt DuckDB file
-delta-syncs poorly (internal pages get reshuffled), so each sync is
-effectively a full ~3 GB transfer rather than an incremental one. Fine
-twice a year; annoying weekly.
+- **Latency, not bandwidth.** SMB is chatty — opening a file is dozens of
+  small round trips. ~1 ms each on LAN, ~30 ms over VPN. Same file, ~30x
+  slower.
+- **VPN sessions time out** on idle and re-auth, and the mount dies with
+  them.
+- **VPN routes through one shared campus gateway** — a bottleneck nobody
+  in the lab controls.
 
-## Wayne State HPC findings
+On campus, none of these apply. Off campus, all three do at once. That's
+the trigger for revisiting this design.
 
-The [WSU Grid](https://tech.wayne.edu/hpc) is **free** — 427 nodes, 8,212
-cores, 56 TB RAM, 1.2 PB disk, open to any WSU student/faculty/staff with
-an AccessID. Accounts are typically created within two business days.
+## Two checks that belong in code, not CLAUDE.md
 
-[Storage tiers](https://services.wayne.edu/TDClient/277/Portal/KB/Article/20247/HPC-storage-solutions):
+Anything that must happen 100% of the time goes in the MCP server.
+CLAUDE.md is advisory — Claude may skip it, a member may not have it
+loaded, a long conversation may bury it. A mount check that runs 95% of
+the time is worse than useless, because you'll trust it.
 
-- **Tier 1** — Panasas ActiveStor Prime, ~1.6 PB raw. Users up to 4 TB,
-  **groups up to 10 TB**, more on request. Two weeks of backups plus
-  snapshots on a separate system.
-- **Tier 2** — Panasas ActiveStor 14/18, ~1.5 PB raw. Users up to 10 TB,
-  **groups up to 50 TB**, more on request. This tier comfortably fits
-  2.8 TB with room to grow.
-- **OSiRIS** — ~8 PB distributed, available if collaborating with U-M or
-  MSU.
+1. **On startup — warehouse freshness.** Read `warehouse.meta.json` off
+   the mount (`{"version", "sha256", "bytes", "built_at"}`). If the
+   version differs from the local copy, copy the new `.duckdb` to a
+   `.tmp`, verify the sha256, then atomically rename over the old one — a
+   rename can't half-succeed, so nobody is ever left with a partial
+   database. Mount unreachable? Use the existing local copy. **Don't ask
+   the user to redownload — just do it.**
+2. **Before each artifact call — mount presence.** Confirm the path
+   exists; if not, return a clean "the drive isn't connected" rather than
+   a confusing filesystem error.
 
-Group directories are a documented, requestable feature — the right unit
-for a lab. [Globus](https://services.wayne.edu/TDClient/277/Portal/KB/Article/20224/How-to-Setup-Globus)
-(`wsugrid#globus`) handles bulk TB transfers in without babysitting.
+Query the warehouse from the **local copy**, not across the mount — a
+3 GB DuckDB file read over SMB is slow.
 
-**On the VPN concern:** [Grid OnDemand requires the WSU VPN](https://tech.wayne.edu/kb/security/wsu-virtual-private-network),
-and interactive VPN sessions do time out — but that only constrains
-*humans* SSHing in. A server permanently inside the campus network isn't
-"connecting through" a VPN, it's already there. WSU also documents a
-**static-IP exception** requestable from hpc@wayne.edu, which is the
-specific lever for a lab machine.
+**CLAUDE.md is for what Claude needs to know, not do:** positive
+`log2_fold_change` means higher in test, how `comparison_id` is built,
+which tables are views, that `condition` is `cntl`/`test`.
 
-**The blocking caveat:** WSU's FAQ states the login node "is for the sole
-purpose of Slurm job submissions, job status, and file transfers." Most
-HPC centers prohibit long-running daemons on login nodes, so the MCP
-server probably **cannot run on the Grid**, even though the Grid is the
-ideal home for the 2.8 TB. This is the single question that determines
-the architecture — ask before designing around it.
+## Failure modes
 
-## Claude-side constraints
+On-campus mounts still drop on sleep/wake, Wi-Fi roaming, NAS reboots,
+and network blips — less often than over VPN, but not never. Mitigate
+with auto-remount on login/wake, plus check #2 above.
 
-Anthropic's cloud connects to the MCP server, **not from the user's
-device**. A server behind the WSU firewall won't connect; it needs to be
-publicly reachable over HTTPS.
+The failure is graceful either way: the warehouse is a local file, so
+**all normal queries keep working**; only artifact access breaks, and the
+fix is remounting.
 
+**Request read-only mounts for everyone but the pipeline operator.**
+`FlemingtonLabMain1` is shared infrastructure co-owned with a
+collaborator and holds the lab's canonical raw data — see
+`raw-fastq-storage-migration.md`, which already documents
+`Operation not permitted` oddities there. No reason to hand every member
+write access to it.
+
+## Path portability
+
+`artifacts_manifest` stores `rel_path` only — never an absolute path.
+Mount roots differ per machine (`/Volumes/FlemingtonLabMain1` on Mac,
+`Z:\` on Windows), so location is resolved at query time by prefixing a
+per-machine configured base. Same disease already noted in
+`raw-fastq-storage-migration.md`, where `samples.fastq_r1/r2` store
+Docker *container* paths that match no real filesystem.
+
+## Fallback: if remote access becomes a real need
+
+Then, and only then, put an HTTPS server in front of `artifacts/`. bigWig
+and BAM stream over HTTP range requests, so IGV works from a URL with no
+mount and no download.
+
+Cost: **$0 marginal** self-hosted on campus hardware — you own the disks,
+WSU provides network and power, nginx/Caddy are free, and Let's Encrypt
+certificates are free. Size is irrelevant to a self-hosted server.
+
+Cloud is the expensive path: [S3](https://www.cloudzero.com/blog/s3-pricing/)
+storage is ~$0.023/GB/month, so 2.8 TB is ~$65/month indefinitely just to
+sit there. Egress (~$0.09/GB) would be near-trivial thanks to range
+requests — **the terabytes drive storage cost, not transfer cost**, which
+is exactly the cost that vanishes on hardware WSU already hosts free.
+
+One Claude-side constraint if this ever happens: Anthropic's cloud
+connects to the MCP server, not from the user's device, so a custom
+connector needs a publicly reachable HTTPS endpoint.
 [MCP tunnels](https://platform.claude.com/docs/en/agents-and-tools/mcp-tunnels/overview)
-solve this with outbound-only connections (no inbound ports, no IP
-allowlisting) — **but tunnels are not available as connectors in
-claude.ai**, only via Managed Agents and the Messages API. So the
-"everyone has the rnaseq connector in their own account" model requires a
-genuinely public HTTPS endpoint with OAuth.
+solve the firewall problem but are **not available as claude.ai
+connectors** — only Managed Agents and the Messages API.
 
-The account model itself works as intended: on Team/Enterprise, an owner
-adds the [custom connector](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)
-org-wide once, and each member authenticates individually — shared
-tooling, separate chat histories, per-user access control.
+## WSU HPC, if storage ever needs to move off the lab NAS
 
-## Recommendation — phased
+The [Grid](https://tech.wayne.edu/hpc) is free — 427 nodes, 8,212 cores,
+1.2 PB disk, open to anyone with an AccessID.
+[Storage tiers](https://services.wayne.edu/TDClient/277/Portal/KB/Article/20247/HPC-storage-solutions):
+Tier 1 Panasas (groups to 10 TB, backed up, two weeks of snapshots) and
+Tier 2 (**groups to 50 TB**, more on request) — 2.8 TB fits easily.
+[Globus](https://services.wayne.edu/TDClient/277/Portal/KB/Article/20224/How-to-Setup-Globus)
+(`wsugrid#globus`) handles bulk transfer.
 
-**Phase 1 (now).** Warehouse only, no server. Rebuild `warehouse.duckdb`
-on the pipeline machine after each run; sync the file to each member's
-laptop. Local, instant, offline, zero infrastructure. Covers ~95% of
-questions.
-
-**Phase 2 (when IGV access is needed by anyone but you).** Stand up an
-HTTPS file server over `artifacts/` with range requests enabled. This is
-the smaller and more urgent half of the server problem — and it's what
-Phase 1 genuinely can't do.
-
-**Phase 3 (when the lab outgrows sync).** Move the warehouse next to that
-same endpoint and expose it as a proper MCP connector. At that point the
-distribution problem dissolves entirely — nobody syncs anything, because
-the data only exists in one place.
-
-Note that Phase 2 mostly builds the host Phase 3 needs, so the sequence
-compounds rather than throwing work away.
-
-**If building the host:** a lab-owned Linux box hosted at the WSU
-Computing Center (they [advertise hosting purchased equipment](https://tech.wayne.edu/kb/high-performance-computing/pi-resources/500159))
-is the sweet spot — institutional network, power, and physical security,
-but full control over the software and permission to run a persistent
-daemon. Cloud VMs work but mean paying to store TBs that WSU stores free,
-and genomic data may carry IRB or data-use restrictions that make a
-personal AWS account a compliance conversation first.
-
-## Questions for hpc@wayne.edu
-
-1. Can we run a persistent (non-Slurm) network service anywhere on your
-   infrastructure — login node, a dedicated VM, or hosted lab hardware?
-2. Can a static-IP lab machine get a firewall exception for **inbound**
-   HTTPS from outside campus?
-3. What's the realistic ceiling on a Tier 2 group allocation beyond the
-   documented 50 TB?
-4. Any institutional restriction on serving this data over public HTTPS
-   (IRB, data-use agreement, human-subjects derivation)?
+Caveat: WSU's FAQ says the login node is "for the sole purpose of Slurm
+job submissions, job status, and file transfers," so a persistent service
+probably can't run there. Not a problem for the current design, which
+needs no server.
