@@ -89,6 +89,32 @@ Do NOT stage these 7 experiments, or delete them if already copied:
 `BMRF1` (3/8), `BGLF4` (2/8).
 The other 11 batch-B experiments are clean and safe to stage.
 
+## Update from the other computer (2026-09-08)
+
+Batch B has been staged and independently `gzip -t` verified here. The source-level numbers
+in the table above are confirmed correct — but the destination copy briefly showed 3
+additional false positives from copy-side truncation, not source damage:
+
+- `BVRF1/test/BVRF1.2_2.fq.gz` — copy was truncated (`unexpected end of file`); the source
+  passes `gzip -t` clean. This inflated the local BVRF1 count to 7/8 before re-copy.
+- `BMLF1_repeat/cntl/pLVX1_1.fq.gz` and `BNLF2b_repeat/cntl/pLVX1_1.fq.gz` — same failure
+  mode, each inflating an otherwise-clean repeat folder to 1/12 locally.
+
+All three were confirmed intact at `x_next_batch/` directly (matching sizes, `gzip -t` exit
+0), then re-copied and re-verified clean. Batch B on this machine now matches the table above
+exactly: 46 genuinely corrupt files, the 11 clean experiments untouched, both repeat folders
+(`BMLF1_repeat`, `BNLF2b_repeat`) reconfirmed fully clean.
+
+Root cause: the NAS connection dropped repeatedly during the original copy of batch B (SMB
+timeouts, one outage lasting several hours), leaving a small number of in-flight files short.
+Worth adding to the Method note below: destination-side truncation from a flaky SMB path is a
+second failure mode distinct from pre-existing source corruption, and both produce identical
+`gzip -t` failures unless the source is checked directly.
+
+**TO DO status:** batch B fully staged. The 7 experiments listed above still should not be
+used without regenerating good replicates from `x_next_batch/`; all other 11 — now including
+both repeat folders, reconfirmed clean — are safe to use.
+
 ## Not yet checked
 The 18 `pipeline_output` folders (these DO have `checksums.sha256` manifests) and the other
 cell lines (Akata, BCBL1, Mutu, SNU719) under `VIRA/rnaseq/raw_data/`.
