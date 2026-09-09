@@ -190,3 +190,76 @@ overall, so **any between-group comparison needs depth normalization.**
    and the two do not agree perfectly - 14,877 vPIC-motif promoters are KO-only. That gap is
    probably where the interesting biology is.
 6. **`chrMT` has 16 entries** - likely artifact, worth dropping.
+
+---
+
+## Which file is "the" file, and the folder-1 / folder-2 reconstruction trap
+
+Added 2026-09-08.
+
+`de_novo_promoters.classified.bed` (folder 1) is the spine: the only file with one row per
+biological entity, carrying the coordinates, the classification and the authoritative
+quantitation. Nearly every analysis will be shaped as "for each of these 453,576 promoters,
+...". Folder 2 has no rows that aren't traceable to a folder-1 promoter (**verified**: of
+8,560,907 read pairs, exactly **1** fails to anchor inside a folder-1 promoter interval).
+
+But folder 2 is not merely redundant support. It holds three things folder 1 cannot give:
+
+1. **Per-replicate counts.** Folder 1 collapses to two numbers per promoter
+   (`Cntl_coverage`, `KO_coverage`) - enough for a fold change, not enough for a statistical
+   test, since within-group variance cannot be estimated from a collapsed number. Folder 2
+   keeps the six libraries separate. **Verified**: 399,328 of 453,576 promoters (88%) have
+   qualifying pairs in >=3 of the 6 libraries; 41,717 in 2; 5,151 in 1.
+2. **Where the transcript goes.** Folder 1 is a point. Folder 2 gives span and splice
+   junctions - the only route to "what does this cryptic promoter actually transcribe."
+3. **The ability to re-filter.** Folder 1's coverage is baked; folder 2 permits read-level QC.
+
+### The trap: folder 2 is a strict, non-uniformly filtered subset
+
+Attempted to reconstruct folder-1 coverage by counting folder-2 read pairs per promoter per
+group, genome-wide. It does not reconstruct.
+
+- **Folder 2 is a strict subset**: declared coverage >= observed read count in *both* groups
+  for **100.0%** of promoters (453,360 / 453,576; 216 exceptions, 0.05%). So folder 2 never
+  adds signal, only loses it.
+- Only **7.2%** of promoters have folder-1 coverage exactly equal to folder-2 read count.
+
+| | declared (folder 1) | observed (folder 2) | retention |
+|---|---|---|---|
+| Cntl | 8,604,997 | 5,838,468 | **67.8%** |
+| KO | 6,044,067 | 2,722,438 | **45.0%** |
+
+A 22.8-point gap. Signal vanishes entirely for a group at 38,366 promoters (8.5%) in Cntl and
+**121,725 (26.8%)** in KO.
+
+**Retention is strongly class-dependent, and not in one direction:**
+
+| Class | Cntl retention | KO retention |
+|---|---|---|
+| Zta | 51.3% | **64.3%** |
+| vPIC | 73.5% | **13.3%** |
+| Zta_vPIC | 67.5% | 37.6% |
+| Unclassified | 59.5% | 60.2% |
+
+Checked and ruled out promoter width as the explanation - stratifying by interval width
+(1 / 2-4 / 5-9 / 10+) does not account for the group asymmetry, and width-1 promoters show
+the same pattern (Cntl 71.2% vs KO 34.5%).
+
+**The cause is unresolved.** Two readings, with opposite implications:
+
+- *Technical*: the "qualifying pair" filter (proper pair, both mates mapped) discards
+  reads at a rate that happens to correlate with class and group - in which case the gap is
+  pure artifact.
+- *Biological*: vPIC promoters in the KO genuinely fail to produce complete paired
+  fragments - in which case the retention difference is itself a result.
+
+Worth resolving before leaning on either file for the vPIC/KO contrast.
+
+### Practical rule
+
+- **Folder 1** = unit of analysis, classification, and **all between-group quantitation**
+  (column 15).
+- **Folder 2** = replicate-level statistics, transcript structure, read-level QC.
+- **Never compute Cntl-vs-KO fold changes from folder-2 read counts.** The 22.8-point
+  retention gap would inflate every Cntl-over-KO effect, and for vPIC promoters it would
+  manufacture a ~5.5x artifactual depletion out of nothing.
