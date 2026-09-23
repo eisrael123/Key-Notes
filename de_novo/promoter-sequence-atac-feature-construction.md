@@ -133,3 +133,32 @@ Coordinates and cluster IDs are metadata, not automatically predictor variables.
 
 - FIMO scoring: https://meme-suite.org/meme/doc/fimo-output-format.html
 - Sequencing-depth normalization background (read-based documentation; the proposed insertion denominator must be defined separately): https://deeptools.readthedocs.io/en/3.2.1/content/tools/bamCoverage.html
+
+## Latest decision: retain binned accessibility as a conditional follow-up
+
+Recorded 2026-09-22. The user approved the explanation below, especially that every feature can be traced to a concrete genomic interval, and requested remembering this possible next step.
+
+**Proceed with the current dataset and analysis first. Consider a binned ATAC representation afterwards if the current analysis is uninformative. This is a deferred option, not an instruction to change the dataset or build a second representation now.**
+
+The current model-ready dataset contains 36 predictors: two sequence-composition features, 28 exact-motif features, and six ATAC summaries. The ten matrix-derived Zta features and all three ZRE-vPIC co-presence/spacing features have been removed from every model feature set. Earlier matrix and motif-pair proposals in this historical note do not supersede that decision. Their measurements remain in the annotated catalogue for reference only. The pipeline and README are in `/Users/flemingtonlab/ethan/de_novo/analysis/cluster_analysis`.
+
+The PI suggested approaching accessibility through pattern recognition rather than restrictive windows. Separate the components of the learning problem:
+
+- Observation: one identified promoter.
+- Ground-truth label: cluster-associated versus isolated under the existing cluster definition.
+- Input representation: the sequence and accessibility measurements provided for each promoter.
+- Learned patterns: relationships between those measurements and the label.
+
+Changing accessibility windows or their representation does not require changing the labels. Machine learning can only use information retained in its inputs. Current upstream/core/downstream averages lose variation inside each region, and the current ATAC features provide no information beyond 500 bp from the TSS. For example, four equally sized subregions with values `[0, 0, 10, 10]` and `[5, 5, 5, 5]` both average to 5, although their spatial profiles differ.
+
+An illustrative future representation would examine `[-2000, +2000)` bp relative to TSS and divide it into consecutive 100-bp bins. This gives 40 bins per condition, or 80 ATAC features across MC and MZ. Normalize each biological replicate separately, then summarize replicates by condition as in the current pipeline. Orient bins consistently to promoter transcription and retain their explicit interval definitions. Each column remains traceable, for example control accessibility between -800 and -700 bp relative to TSS.
+
+A traditional model, such as a random forest, can use those numerical columns to investigate informative positions and combinations. Deep learning is not required, and traditional ML is not limited to three regional averages. No specific shape, location, or useful result is established in advance.
+
+The +/-2 kb extent and 100-bp bin width are examples, not biologically validated or selected settings. A binned approach still needs an outer boundary and resolution. If pursued, compare it with the existing representation as a baseline; select any settings using training/validation data while keeping final test chromosomes untouched. Preserve chromosome/group separation during evaluation. Feature importance describes predictive associations rather than causal licensing.
+
+Sources supporting the discussion:
+
+- Genomic signal binning: https://www.bioconductor.org/packages/release/bioc/manuals/genomation/man/genomation.pdf
+- Random forests accept numerical feature matrices: https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html#sklearn.ensemble.RandomForestClassifier.fit
+- Training-only feature selection and avoiding data leakage: https://scikit-learn.org/stable/common_pitfalls.html#data-leakage
